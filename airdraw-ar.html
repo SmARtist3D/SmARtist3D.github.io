@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#101522" />
+  <title>AirDraw AR</title>
+
+  <!-- A-Frame framework -->
+  <script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
+
+  <style>
+    :root {
+      color-scheme: dark;
+      --glass: rgba(16, 22, 36, .68);
+      --line: rgba(255, 255, 255, .19);
+      --white: #f7f8ff;
+      --muted: rgba(247, 248, 255, .72);
+      --accent: #77f0d0;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: transparent;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: none;
+    }
+
+    a-scene {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      background: transparent !important;
+    }
+
+    .hud {
+      position: fixed;
+      z-index: 10;
+      inset: 0;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: max(22px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .brand, .status {
+      border: 1px solid var(--line);
+      background: var(--glass);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      box-shadow: 0 8px 32px rgba(0,0,0,.18);
+      color: var(--white);
+    }
+
+    .brand {
+      padding: 11px 15px;
+      border-radius: 16px;
+      font-size: 14px;
+      font-weight: 750;
+      letter-spacing: .12em;
+    }
+
+    .brand span { color: var(--accent); }
+
+    .status {
+      max-width: 52%;
+      padding: 10px 13px;
+      border-radius: 14px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      text-align: right;
+    }
+
+    .aim {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 22px;
+      height: 22px;
+      transform: translate(-50%, -50%);
+      border: 1.5px solid rgba(255,255,255,.92);
+      border-radius: 50%;
+      box-shadow: 0 0 0 5px rgba(0,0,0,.13), 0 0 18px rgba(255,255,255,.5);
+    }
+
+    .aim::before, .aim::after {
+      content: "";
+      position: absolute;
+      background: rgba(255,255,255,.92);
+      border-radius: 2px;
+    }
+    .aim::before { width: 4px; height: 4px; left: 50%; top: 50%; transform: translate(-50%,-50%); }
+    .aim::after { width: 34px; height: 1px; left: 50%; top: 50%; transform: translate(-50%,-50%); opacity: .5; }
+
+    .controls {
+      pointer-events: auto;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+      width: min(100%, 560px);
+      margin: 0 auto;
+    }
+
+    button {
+      border: 1px solid rgba(255,255,255,.24);
+      color: var(--white);
+      font: inherit;
+      font-weight: 800;
+      letter-spacing: .12em;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      box-shadow: 0 10px 30px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.14);
+      transition: transform .12s ease, filter .12s ease, background .12s ease;
+    }
+    button:active { transform: scale(.97); filter: brightness(1.12); }
+
+    #draw {
+      min-height: 76px;
+      border-radius: 22px;
+      background: linear-gradient(135deg, rgba(34, 211, 174, .94), rgba(29, 156, 193, .92));
+      color: #071d25;
+      font-size: 19px;
+      box-shadow: 0 12px 35px rgba(20, 190, 166, .28), inset 0 1px 0 rgba(255,255,255,.55);
+    }
+    #draw.is-drawing {
+      background: linear-gradient(135deg, #ffcf70, #ff9e72);
+      color: #29170b;
+    }
+
+    #clear {
+      min-width: 104px;
+      min-height: 76px;
+      padding: 0 17px;
+      border-radius: 22px;
+      background: var(--glass);
+      font-size: 12px;
+    }
+
+    #enter-ar {
+      pointer-events: auto;
+      position: fixed;
+      z-index: 11;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      padding: 16px 22px;
+      border-radius: 18px;
+      background: rgba(16, 22, 36, .86);
+      border-color: rgba(119,240,208,.6);
+      color: var(--white);
+      font-size: 14px;
+      white-space: nowrap;
+    }
+    #enter-ar[hidden] { display: none; }
+
+    .hint {
+      position: absolute;
+      left: 50%;
+      bottom: calc(max(112px, env(safe-area-inset-bottom) + 100px));
+      transform: translateX(-50%);
+      width: max-content;
+      max-width: calc(100% - 36px);
+      color: rgba(255,255,255,.78);
+      font-size: 11px;
+      text-align: center;
+      text-shadow: 0 2px 10px rgba(0,0,0,.8);
+    }
+
+    @media (max-width: 380px) {
+      .hud { padding-left: 13px; padding-right: 13px; }
+      #clear { min-width: 88px; padding: 0 12px; }
+      .status { font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Transparent scene lets the device camera show through in immersive AR. -->
+  <a-scene
+    id="scene"
+    embedded
+    background="transparent: true"
+    renderer="alpha: true; colorManagement: true; physicallyCorrectLights: true"
+    webxr="optionalFeatures: hit-test, local-floor"
+    air-draw="distance: 0.5; radius: 0.006"
+    vr-mode-ui="enabled: false">
+    <a-entity id="cameraRig">
+      <a-camera id="camera" position="0 0 0" look-controls="enabled: false"></a-camera>
+    </a-entity>
+  </a-scene>
+
+  <div class="hud">
+    <div class="topbar">
+      <div class="brand">AIR<span>DRAW</span></div>
+      <div class="status" id="status">Enter AR to draw in the space around you.</div>
+    </div>
+
+    <div class="aim" aria-hidden="true"></div>
+    <div class="hint">Aim with the center dot · Hold DRAW to make a stroke</div>
+
+    <div class="controls">
+      <button id="draw" type="button" aria-label="Hold to draw">DRAW</button>
+      <button id="clear" type="button">CLEAR</button>
+    </div>
+  </div>
+
+  <button id="enter-ar" type="button">START AR EXPERIENCE</button>
+
+  <script>
+    (() => {
+      const scene = document.querySelector('#scene');
+      const drawButton = document.querySelector('#draw');
+      const clearButton = document.querySelector('#clear');
+      const enterButton = document.querySelector('#enter-ar');
+      const status = document.querySelector('#status');
+
+      // Each stroke is its own THREE.Group. Small cylinders connect successive
+      // camera-relative brush-tip positions to create a continuous 3D line.
+      AFRAME.registerComponent('air-draw', {
+        schema: {
+          distance: { type: 'number', default: 0.5 },
+          radius: { type: 'number', default: 0.006 }
+        },
+
+        init() {
+          this.drawing = false;
+          this.lastPoint = null;
+          this.stroke = null;
+          this.strokes = [];
+          this.cameraWorldPosition = new THREE.Vector3();
+          this.cameraForward = new THREE.Vector3();
+          this.tip = new THREE.Vector3();
+          this.delta = new THREE.Vector3();
+          this.up = new THREE.Vector3(0, 1, 0);
+          this.material = new THREE.MeshStandardMaterial({
+            color: 0x70f0d0,
+            emissive: 0x123d35,
+            metalness: 0.12,
+            roughness: 0.3
+          });
+        },
+
+        startStroke() {
+          if (this.drawing) return;
+          this.drawing = true;
+          this.lastPoint = null;
+          this.stroke = new THREE.Group();
+          this.stroke.name = 'air-drawing-stroke';
+          this.el.object3D.add(this.stroke);
+          this.strokes.push(this.stroke);
+          drawButton.classList.add('is-drawing');
+          status.textContent = 'Drawing · release DRAW to finish this stroke.';
+        },
+
+        finishStroke() {
+          if (!this.drawing) return;
+          this.drawing = false;
+          this.lastPoint = null;
+          this.stroke = null;
+          drawButton.classList.remove('is-drawing');
+          status.textContent = 'Stroke saved · hold DRAW to start another.';
+        },
+
+        addSegment(from, to) {
+          this.delta.subVectors(to, from);
+          const length = this.delta.length();
+          if (length < 0.002) return;
+
+          const geometry = new THREE.CylinderGeometry(
+            this.data.radius, this.data.radius, length, 7, 1, true
+          );
+          const segment = new THREE.Mesh(geometry, this.material);
+          segment.position.copy(from).add(to).multiplyScalar(0.5);
+          segment.quaternion.setFromUnitVectors(this.up, this.delta.normalize());
+          segment.frustumCulled = false;
+          this.stroke.add(segment);
+        },
+
+        tick() {
+          const camera = this.el.sceneEl.camera;
+          if (!camera) return;
+
+          // Read the active XR camera's world transform every frame.
+          camera.getWorldPosition(this.cameraWorldPosition);
+          camera.getWorldDirection(this.cameraForward);
+
+          // Three.js camera forward points down local -Z. This places the tip
+          // exactly 0.5 m along that forward vector from the camera position.
+          this.tip.copy(this.cameraWorldPosition)
+            .addScaledVector(this.cameraForward, this.data.distance);
+
+          if (!this.drawing) return;
+
+          if (this.lastPoint) {
+            this.addSegment(this.lastPoint, this.tip);
+          }
+          this.lastPoint = this.tip.clone();
+        },
+
+        clear() {
+          this.finishStroke();
+          for (const stroke of this.strokes) {
+            this.el.object3D.remove(stroke);
+            stroke.traverse((object) => {
+              if (object.isMesh) object.geometry.dispose();
+            });
+          }
+          this.strokes = [];
+          status.textContent = 'Canvas cleared · ready for a fresh drawing.';
+        }
+      });
+
+      const painter = () => scene.components['air-draw'];
+
+      // Pointer events work for touch, stylus, and mouse. Releasing anywhere
+      // (including outside the button) ends the active stroke.
+      const begin = (event) => {
+        event.preventDefault();
+        if (!scene.is('vr-mode') && !scene.renderer.xr.isPresenting) {
+          status.textContent = 'Start the AR experience before drawing.';
+          return;
+        }
+        const component = painter();
+        if (component) component.startStroke();
+        try { drawButton.setPointerCapture(event.pointerId); } catch (_) {}
+      };
+
+      const end = (event) => {
+        if (event) event.preventDefault();
+        const component = painter();
+        if (component) component.finishStroke();
+      };
+
+      drawButton.addEventListener('pointerdown', begin);
+      drawButton.addEventListener('pointerup', end);
+      drawButton.addEventListener('pointercancel', end);
+      drawButton.addEventListener('lostpointercapture', end);
+      window.addEventListener('pointerup', end);
+      window.addEventListener('blur', end);
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) end();
+      });
+
+      clearButton.addEventListener('click', () => {
+        const component = painter();
+        if (component) component.clear();
+      });
+
+      // Request an immersive-ar session explicitly. The A-Frame scene's
+      // webxr attribute declares the requested optional features as well.
+      enterButton.addEventListener('click', async () => {
+        if (!navigator.xr) {
+          status.textContent = 'WebXR is unavailable. Use a supported AR browser on HTTPS.';
+          return;
+        }
+        try {
+          const supported = await navigator.xr.isSessionSupported('immersive-ar');
+          if (!supported) {
+            status.textContent = 'This browser or device does not support immersive AR.';
+            return;
+          }
+          const session = await navigator.xr.requestSession('immersive-ar', {
+            optionalFeatures: ['hit-test', 'local-floor']
+          });
+          await scene.renderer.xr.setSession(session);
+          enterButton.hidden = true;
+          status.textContent = 'AR is active · point the center dot and hold DRAW.';
+          session.addEventListener('end', () => {
+            enterButton.hidden = false;
+            status.textContent = 'AR session ended · start AR to draw again.';
+            end();
+          });
+        } catch (error) {
+          console.error(error);
+          status.textContent = 'Could not start AR. Check camera permission and try again.';
+        }
+      });
+
+      scene.addEventListener('loaded', () => {
+        status.textContent = 'Ready · start AR, then hold DRAW.';
+      });
+    })();
+  </script>
+</body>
+</html>
