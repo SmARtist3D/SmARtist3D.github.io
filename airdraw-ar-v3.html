@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>AirDraw AR</title>
+<script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:system-ui,sans-serif;touch-action:none;-webkit-tap-highlight-color:transparent}
+a-scene{position:fixed;inset:0;background:transparent!important}
+#hud{position:fixed;z-index:20;inset:0;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;padding:max(18px,env(safe-area-inset-top)) 16px max(20px,env(safe-area-inset-bottom));color:#f8faff}
+.top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.brand,.status{background:#101626c9;border:1px solid #ffffff38;backdrop-filter:blur(16px);border-radius:15px;padding:11px 14px;box-shadow:0 8px 28px #0004}.brand{font-weight:850;letter-spacing:.12em}.brand b{color:#70f0d0}.status{max-width:60%;font-size:11px;line-height:1.4;text-align:right}
+.reticle{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:22px;height:22px;border:1.5px solid white;border-radius:50%;box-shadow:0 0 0 5px #0002,0 0 18px #fff8}.reticle:after{content:"";position:absolute;width:4px;height:4px;background:white;border-radius:50%;left:50%;top:50%;transform:translate(-50%,-50%)}
+.hint{position:absolute;bottom:calc(max(112px,env(safe-area-inset-bottom) + 100px));left:50%;transform:translateX(-50%);font-size:11px;color:white;text-shadow:0 2px 8px #000;white-space:nowrap}
+.controls{pointer-events:auto;display:grid;grid-template-columns:1fr auto;gap:11px;width:min(100%,560px);margin:0 auto}
+button{min-height:72px;border:1px solid #ffffff40;border-radius:21px;font:inherit;font-weight:850;letter-spacing:.1em;touch-action:none;user-select:none;backdrop-filter:blur(18px);box-shadow:0 10px 30px #0004,inset 0 1px #ffffff30}
+#draw{background:linear-gradient(135deg,#70f0d0,#35b7c8);color:#08232a;font-size:19px}#draw.active{background:linear-gradient(135deg,#ffd27b,#ff9874)}#clear{min-width:100px;padding:0 17px;background:#101626c9;color:white;font-size:12px}
+#start{position:fixed;z-index:30;left:50%;top:50%;transform:translate(-50%,-50%);padding:0 22px;background:#101626e8;color:white;border:1px solid #70f0d0;white-space:nowrap}#start[hidden]{display:none}
+@media(max-width:380px){.status{font-size:10px}.controls{gap:8px}#clear{min-width:86px}}
+</style></head><body>
+<a-scene id="scene" embedded background="transparent:true" renderer="alpha:true;colorManagement:true" webxr="optionalFeatures:hit-test,local-floor,dom-overlay;overlayElement:#hud" vr-mode-ui="enabled:false" air-draw="distance:0.5;radius:0.006">
+<a-entity><a-camera position="0 0 0" look-controls="enabled:false"></a-camera></a-entity></a-scene>
+<div id="hud"><div class="top"><div class="brand">AIR<b>DRAW</b></div><div class="status" id="status">Start AR, then hold DRAW.</div></div><div class="reticle"></div><div class="hint">Center dot = brush direction · Hold DRAW to make a stroke</div><div class="controls"><button id="draw">DRAW</button><button id="clear">CLEAR</button></div></div>
+<button id="start">START AR EXPERIENCE</button>
+<script>
+(()=>{
+const scene=document.querySelector('#scene'),draw=document.querySelector('#draw'),clear=document.querySelector('#clear'),start=document.querySelector('#start'),status=document.querySelector('#status');
+AFRAME.registerComponent('air-draw',{
+schema:{distance:{type:'number',default:.5},radius:{type:'number',default:.006}},
+init(){this.drawing=false;this.prev=null;this.stroke=null;this.strokes=[];this.pos=new THREE.Vector3();this.dir=new THREE.Vector3();this.tip=new THREE.Vector3();this.delta=new THREE.Vector3();this.up=new THREE.Vector3(0,1,0);this.mat=new THREE.MeshBasicMaterial({color:0x70f0d0});this.marker=new THREE.Mesh(new THREE.SphereGeometry(.012,12,10),new THREE.MeshBasicMaterial({color:0xffcf70}));this.marker.visible=false;this.el.object3D.add(this.marker)},
+startStroke(){if(this.drawing)return;this.drawing=true;this.prev=null;this.stroke=new THREE.Group();this.el.object3D.add(this.stroke);this.strokes.push(this.stroke);this.marker.visible=true;draw.classList.add('active');status.textContent='DRAWING — release to finish.'},
+finishStroke(){if(!this.drawing)return;this.drawing=false;this.prev=null;this.stroke=null;this.marker.visible=false;draw.classList.remove('active');status.textContent='Stroke finished. Hold DRAW for another.'},
+addSegment(a,b){this.delta.subVectors(b,a);let len=this.delta.length();if(len<.001)return;let m=new THREE.Mesh(new THREE.CylinderGeometry(this.data.radius,this.data.radius,len,8,1,true),this.mat);m.position.copy(a).add(b).multiplyScalar(.5);m.quaternion.setFromUnitVectors(this.up,this.delta.normalize());m.frustumCulled=false;this.stroke.add(m)},
+tick(){let base=this.el.sceneEl.camera;if(!base)return;let xr=this.el.sceneEl.renderer.xr;let cam=xr&&xr.isPresenting?xr.getCamera(base):base;cam.getWorldPosition(this.pos);cam.getWorldDirection(this.dir);this.tip.copy(this.pos).addScaledVector(this.dir,this.data.distance);if(!this.drawing)return;this.marker.position.copy(this.tip);if(this.prev)this.addSegment(this.prev,this.tip);this.prev=this.tip.clone()},
+clear(){this.finishStroke();for(const g of this.strokes){this.el.object3D.remove(g);g.traverse(o=>{if(o.isMesh)o.geometry.dispose()})}this.strokes=[];status.textContent='All strokes cleared.'}
+});
+const painter=()=>scene.components['air-draw'];
+function begin(e){e.preventDefault();let p=painter();if(!p){status.textContent='Drawing system loading — try again.';return}p.startStroke();try{draw.setPointerCapture(e.pointerId)}catch(_){}}
+function end(e){if(e)e.preventDefault();painter()?.finishStroke()}
+draw.addEventListener('pointerdown',begin);draw.addEventListener('pointerup',end);draw.addEventListener('pointercancel',end);draw.addEventListener('lostpointercapture',()=>{if(painter()?.drawing)end()});window.addEventListener('pointerup',end);window.addEventListener('blur',end);document.addEventListener('visibilitychange',()=>{if(document.hidden)end()});
+clear.addEventListener('click',()=>{let p=painter();if(p)p.clear();else status.textContent='Drawing system loading.'});
+start.addEventListener('click',async()=>{if(!navigator.xr){status.textContent='WebXR unavailable. Use a compatible AR browser over HTTPS.';return}try{if(!await navigator.xr.isSessionSupported('immersive-ar')){status.textContent='This browser/device does not support immersive AR.';return}
+let session=await navigator.xr.requestSession('immersive-ar',{optionalFeatures:['hit-test','local-floor','dom-overlay'],domOverlay:{root:document.body}});
+await scene.renderer.xr.setSession(session);start.hidden=true;status.textContent='AR READY — hold DRAW to create a 3D stroke.';
+session.addEventListener('end',()=>{start.hidden=false;end();status.textContent='AR ended. Start AR to continue.'});
+}catch(err){console.error(err);status.textContent='Could not start AR. Check browser support and camera permissions.'}});
+scene.addEventListener('loaded',()=>status.textContent='Ready. Start AR, then hold DRAW.');
+})();
+</script></body></html>
