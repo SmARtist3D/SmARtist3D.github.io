@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>AirDraw AR</title>
+<script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin:0; width:100%; height:100%; overflow:hidden; background:transparent; font-family:system-ui,-apple-system,Segoe UI,sans-serif; }
+  a-scene { position:fixed; inset:0; }
+  .panel { position:fixed; z-index:20; left:50%; bottom:max(22px, env(safe-area-inset-bottom)); transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:12px; width:min(92vw,440px); pointer-events:none; }
+  .controls { display:flex; gap:12px; pointer-events:auto; }
+  button { border:1px solid rgba(255,255,255,.32); border-radius:999px; padding:15px 25px; color:white; font-size:16px; font-weight:750; letter-spacing:.04em; background:rgba(15,25,35,.78); backdrop-filter:blur(12px); box-shadow:0 8px 28px rgba(0,0,0,.25); touch-action:none; }
+  #draw { background:rgba(0,150,130,.9); min-width:150px; }
+  #draw.active { background:#f28c28; transform:scale(1.04); }
+  #clear { background:rgba(35,45,58,.82); }
+  #start { pointer-events:auto; background:rgba(15,25,35,.86); }
+  #status { color:white; font-size:13px; text-align:center; text-shadow:0 1px 5px #000; background:rgba(0,0,0,.38); border-radius:20px; padding:7px 13px; max-width:100%; }
+  #reticle { position:fixed; z-index:15; left:50%; top:50%; width:22px; height:22px; transform:translate(-50%,-50%); border:2px solid rgba(255,255,255,.95); border-radius:50%; box-shadow:0 0 0 2px rgba(0,0,0,.25),0 0 12px rgba(0,0,0,.45); pointer-events:none; }
+  #reticle:before,#reticle:after { content:""; position:absolute; background:white; left:50%; top:50%; transform:translate(-50%,-50%); }
+  #reticle:before { width:2px;height:34px; } #reticle:after { height:2px;width:34px; }
+  .hint { color:#fff; font-size:12px; text-shadow:0 1px 5px #000; text-align:center; }
+  body:not(.in-ar) #reticle, body:not(.in-ar) #draw, body:not(.in-ar) #clear { display:none; }
+</style>
+</head>
+<body>
+<a-scene
+  embedded
+  renderer="alpha:true; colorManagement:true; physicallyCorrectLights:false"
+  vr-mode-ui="enabled:false"
+  webxr="optionalFeatures: hit-test, local-floor, dom-overlay"
+  air-draw>
+  <a-camera id="mainCamera" position="0 0 0" look-controls="enabled:false"></a-camera>
+</a-scene>
+
+<div id="reticle"></div>
+<div class="panel">
+  <div id="status">Tap START AR EXPERIENCE, then point your phone where you want to draw.</div>
+  <div class="controls">
+    <button id="start">START AR EXPERIENCE</button>
+    <button id="draw">HOLD TO DRAW</button>
+    <button id="clear">CLEAR</button>
+  </div>
+  <div class="hint">Hold DRAW and move your phone. Release to finish a stroke.</div>
+</div>
+
+<script>
+(() => {
+  const statusEl = document.getElementById('status');
+  const startBtn = document.getElementById('start');
+  const drawBtn = document.getElementById('draw');
+  const clearBtn = document.getElementById('clear');
+  const scene = document.querySelector('a-scene');
+
+  function status(message) { statusEl.textContent = message; }
+
+  startBtn.addEventListener('click', async () => {
+    if (!navigator.xr) {
+      status('WebXR is not available. Open this page in a compatible mobile browser over HTTPS.');
+      return;
+    }
+    try {
+      const supported = await navigator.xr.isSessionSupported('immersive-ar');
+      if (!supported) {
+        status('Immersive AR is not supported on this device/browser.');
+        return;
+      }
+      const session = await navigator.xr.requestSession('immersive-ar', {
+        optionalFeatures: ['local-floor', 'hit-test', 'dom-overlay'],
+        domOverlay: { root: document.body }
+      });
+      await scene.renderer.xr.setSession(session);
+      document.body.classList.add('in-ar');
+      startBtn.style.display = 'none';
+      status('AR ready. Hold DRAW and move your phone to create a 3D stroke.');
+      session.addEventListener('end', () => {
+        document.body.classList.remove('in-ar');
+        startBtn.style.display = '';
+        status('AR ended. Tap START AR EXPERIENCE to begin again.');
+      });
+    } catch (err) {
+      status('Could not start AR: ' + (err.message || err));
+    }
+  });
+
+  function setDrawing(active) {
+    const component = scene.components['air-draw'];
+    if (!component) return;
+    if (active) component.beginStroke();
+    else component.endStroke();
+    drawBtn.classList.toggle('active', active);
+    drawBtn.textContent = active ? 'DRAWING…' : 'HOLD TO DRAW';
+  }
+  drawBtn.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (!document.body.classList.contains('in-ar')) { status('Start AR first.'); return; }
+    try { drawBtn.setPointerCapture(e.pointerId); } catch (_) {}
+    setDrawing(true);
+  });
+  const release = e => { if (drawBtn.classList.contains('active')) setDrawing(false); };
+  drawBtn.addEventListener('pointerup', release);
+  drawBtn.addEventListener('pointercancel', release);
+  drawBtn.addEventListener('lostpointercapture', release);
+  window.addEventListener('blur', release);
+  clearBtn.addEventListener('click', () => {
+    const component = scene.components['air-draw'];
+    if (component) component.clearAll();
+    status('All drawings cleared.');
+  });
+})();
+
+AFRAME.registerComponent('air-draw', {
+  schema: { distance: {default: 0.5}, radius: {default: 0.009} },
+  init: function () {
+    this.drawing = false;
+    this.currentGroup = null;
+    this.previousPoint = null;
+    this.strokes = [];
+    this.worldPoint = new THREE.Vector3();
+    this.localPoint = new THREE.Vector3();
+    this.cameraPosition = new THREE.Vector3();
+    this.cameraDirection = new THREE.Vector3();
+    this.segmentDirection = new THREE.Vector3();
+    this.midpoint = new THREE.Vector3();
+    this.up = new THREE.Vector3(0,1,0);
+    this.dotGeometry = new THREE.SphereGeometry(this.data.radius * 1.15, 8, 8);
+    this.material = new THREE.MeshBasicMaterial({ color: 0x00ffd0, depthTest: false, depthWrite: false });
+    this.marker = new THREE.Mesh(new THREE.SphereGeometry(0.012, 12, 12),
+      new THREE.MeshBasicMaterial({color:0xffd447, depthTest:false, depthWrite:false}));
+    this.marker.visible = false;
+    this.el.object3D.add(this.marker);
+  },
+  beginStroke: function () {
+    if (this.drawing) return;
+    this.drawing = true;
+    this.currentGroup = new THREE.Group();
+    this.el.object3D.add(this.currentGroup);
+    this.previousPoint = null;
+    this.strokes.push(this.currentGroup);
+    this.pointCount = 0;
+    const s = document.getElementById('status');
+    s.textContent = 'Drawing… move your phone while holding the button.';
+  },
+  endStroke: function () {
+    if (!this.drawing) return;
+    this.drawing = false;
+    this.marker.visible = false;
+    const count = this.pointCount || 0;
+    this.currentGroup = null;
+    this.previousPoint = null;
+    document.getElementById('status').textContent = count > 1
+      ? 'Stroke saved (' + count + ' points). Hold DRAW for another.'
+      : 'Stroke finished. Move farther while holding DRAW to make a longer line.';
+  },
+  tick: function () {
+    const renderer = this.el.sceneEl.renderer;
+    const baseCamera = this.el.sceneEl.camera;
+    if (!renderer || !baseCamera) return;
+
+    let camera = baseCamera;
+    if (renderer.xr && renderer.xr.isPresenting) {
+      const xrCamera = renderer.xr.getCamera(baseCamera);
+      if (xrCamera && xrCamera.cameras && xrCamera.cameras.length) {
+        // The first XR view has a valid tracked world transform in immersive AR.
+        camera = xrCamera.cameras[0];
+      } else if (xrCamera) {
+        camera = xrCamera;
+      }
+    }
+
+    camera.updateMatrixWorld(true);
+    camera.getWorldPosition(this.cameraPosition);
+    camera.getWorldDirection(this.cameraDirection);
+    this.worldPoint.copy(this.cameraPosition).addScaledVector(this.cameraDirection, -this.data.distance);
+
+    // Drawing groups are children of the scene root; convert world coordinates
+    // into that root's local coordinate system before adding geometry.
+    this.el.object3D.updateMatrixWorld(true);
+    this.localPoint.copy(this.worldPoint);
+    this.el.object3D.worldToLocal(this.localPoint);
+
+    this.marker.position.copy(this.localPoint);
+    this.marker.visible = this.drawing;
+
+    if (this.drawing) {
+      if (!this.previousPoint || this.previousPoint.distanceToSquared(this.localPoint) > 0.000004) {
+        this.addPoint(this.localPoint);
+      }
+    }
+  },
+  addPoint: function (point) {
+    if (!this.currentGroup) return;
+    const dot = new THREE.Mesh(this.dotGeometry, this.material);
+    dot.position.copy(point);
+    this.currentGroup.add(dot);
+    if (this.previousPoint) {
+      const delta = this.segmentDirection.subVectors(point, this.previousPoint);
+      const length = delta.length();
+      if (length > 0.0001) {
+        this.midpoint.addVectors(point, this.previousPoint).multiplyScalar(0.5);
+        const geometry = new THREE.CylinderGeometry(this.data.radius, this.data.radius, length, 8, 1, false);
+        const cylinder = new THREE.Mesh(geometry, this.material);
+        cylinder.position.copy(this.midpoint);
+        cylinder.quaternion.setFromUnitVectors(this.up, delta.normalize());
+        this.currentGroup.add(cylinder);
+      }
+    }
+    this.previousPoint = point.clone();
+    this.pointCount++;
+  },
+  clearAll: function () {
+    this.drawing = false;
+    this.marker.visible = false;
+    for (const group of this.strokes) {
+      group.traverse(obj => {
+        if (obj.isMesh && obj.geometry !== this.dotGeometry) obj.geometry.dispose();
+      });
+      this.el.object3D.remove(group);
+    }
+    this.strokes = [];
+    this.currentGroup = null;
+    this.previousPoint = null;
+    const btn = document.getElementById('draw');
+    btn.classList.remove('active');
+    btn.textContent = 'HOLD TO DRAW';
+  }
+});
+})();
+</script>
+</body>
+</html>
