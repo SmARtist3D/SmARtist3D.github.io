@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>AirDraw AR v5</title>
+<script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
+<script>
+AFRAME.registerComponent('air-draw',{
+ schema:{distance:{default:.5},radius:{default:.009}},
+ init:function(){
+  this.drawing=false;this.currentGroup=null;this.previousPoint=null;this.strokes=[];
+  this.worldPoint=new THREE.Vector3();this.localPoint=new THREE.Vector3();
+  this.cameraPosition=new THREE.Vector3();this.cameraDirection=new THREE.Vector3();
+  this.delta=new THREE.Vector3();this.midpoint=new THREE.Vector3();this.up=new THREE.Vector3(0,1,0);
+  this.dotGeometry=new THREE.SphereGeometry(this.data.radius*1.15,8,8);
+  this.material=new THREE.MeshBasicMaterial({color:0x00ffd0,depthTest:false,depthWrite:false,side:THREE.DoubleSide});
+  this.marker=new THREE.Mesh(new THREE.SphereGeometry(.012,12,12),new THREE.MeshBasicMaterial({color:0xffd447,depthTest:false,depthWrite:false}));
+  this.marker.visible=false;this.el.object3D.add(this.marker);
+ },
+ getBrushPoint:function(){
+  const scene=this.el.sceneEl,renderer=scene.renderer,base=scene.camera;if(!renderer||!base)return false;
+  let cam=base;
+  if(renderer.xr&&renderer.xr.isPresenting){const xrCam=renderer.xr.getCamera(base);cam=(xrCam&&xrCam.cameras&&xrCam.cameras.length)?xrCam.cameras[0]:(xrCam||base);}
+  cam.updateMatrixWorld(true);cam.getWorldPosition(this.cameraPosition);cam.getWorldDirection(this.cameraDirection);
+  this.worldPoint.copy(this.cameraPosition).addScaledVector(this.cameraDirection,-this.data.distance);
+  this.el.object3D.updateMatrixWorld(true);this.localPoint.copy(this.worldPoint);this.el.object3D.worldToLocal(this.localPoint);return true;
+ },
+ beginStroke:function(){if(this.drawing)return;this.drawing=true;this.currentGroup=new THREE.Group();this.el.object3D.add(this.currentGroup);this.previousPoint=null;this.pointCount=0;this.strokes.push(this.currentGroup);document.getElementById('status').textContent='Drawing… move your phone while holding the button.';},
+ endStroke:function(){if(!this.drawing)return;this.drawing=false;this.marker.visible=false;const n=this.pointCount||0;this.currentGroup=null;this.previousPoint=null;document.getElementById('status').textContent=n>1?'Stroke saved ('+n+' points). Hold DRAW for another.':'Stroke finished. Move farther while holding DRAW to make a longer line.';},
+ tick:function(){if(!this.getBrushPoint())return;this.marker.position.copy(this.localPoint);this.marker.visible=this.drawing;if(this.drawing&&(!this.previousPoint||this.previousPoint.distanceToSquared(this.localPoint)>.000004))this.addPoint(this.localPoint);},
+ addPoint:function(p){
+  if(!this.currentGroup)return;const dot=new THREE.Mesh(this.dotGeometry,this.material);dot.position.copy(p);this.currentGroup.add(dot);
+  if(this.previousPoint){this.delta.subVectors(p,this.previousPoint);const len=this.delta.length();if(len>.0001){this.midpoint.addVectors(p,this.previousPoint).multiplyScalar(.5);const mesh=new THREE.Mesh(new THREE.CylinderGeometry(this.data.radius,this.data.radius,len,8,1,false),this.material);mesh.position.copy(this.midpoint);mesh.quaternion.setFromUnitVectors(this.up,this.delta.normalize());this.currentGroup.add(mesh);}}
+  this.previousPoint=p.clone();this.pointCount++;
+ },
+ clearAll:function(){this.drawing=false;this.marker.visible=false;for(const g of this.strokes){g.traverse(o=>{if(o.isMesh&&o.geometry!==this.dotGeometry)o.geometry.dispose();});this.el.object3D.remove(g);}this.strokes=[];this.currentGroup=null;this.previousPoint=null;},
+ remove:function(){this.clearAll();this.dotGeometry.dispose();this.material.dispose();this.marker.geometry.dispose();this.marker.material.dispose();}
+});
+</script>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:system-ui,sans-serif}
+a-scene{position:fixed;inset:0}#overlay{position:fixed;inset:0;z-index:20;pointer-events:none}
+.panel{position:absolute;left:50%;bottom:max(22px,env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:12px;width:min(94vw,460px);pointer-events:none}
+.controls{display:flex;gap:10px;pointer-events:auto}
+button{border:1px solid #ffffff55;border-radius:999px;padding:14px 20px;color:white;font-size:15px;font-weight:750;background:#0f1923dd;backdrop-filter:blur(12px);box-shadow:0 8px 28px #0004;touch-action:manipulation}
+#draw{background:#009682f0;min-width:145px;touch-action:none}#draw.active{background:#f28c28;transform:scale(1.04)}#clear{background:#232d3ae8}
+#status{color:white;font-size:13px;text-align:center;text-shadow:0 1px 5px #000;background:#0000007a;border-radius:20px;padding:8px 13px;max-width:100%}
+#reticle{position:absolute;left:50%;top:50%;width:22px;height:22px;transform:translate(-50%,-50%);border:2px solid white;border-radius:50%;box-shadow:0 0 0 2px #0004,0 0 12px #0007;pointer-events:none}
+#reticle:before,#reticle:after{content:"";position:absolute;background:white;left:50%;top:50%;transform:translate(-50%,-50%)}
+#reticle:before{width:2px;height:34px}#reticle:after{height:2px;width:34px}
+.hint{color:white;font-size:12px;text-shadow:0 1px 5px #000;text-align:center}
+body:not(.in-ar) #reticle,body:not(.in-ar) #draw,body:not(.in-ar) #clear{display:none}
+</style>
+</head>
+<body>
+<a-scene embedded renderer="alpha:true;colorManagement:true;physicallyCorrectLights:false" vr-mode-ui="enabled:false"
+ webxr="referenceSpaceType:local;optionalFeatures:hit-test,dom-overlay;overlayElement:#overlay" air-draw>
+ <a-camera position="0 0 0" look-controls="enabled:false"></a-camera>
+</a-scene>
+<div id="overlay">
+ <div id="reticle"></div><div class="panel">
+  <div id="status">Tap START AR EXPERIENCE, then point your phone where you want to draw.</div>
+  <div class="controls"><button id="start">START AR EXPERIENCE</button><button id="draw">HOLD TO DRAW</button><button id="clear">CLEAR</button></div>
+  <div class="hint">Hold DRAW and move your phone. Release to finish a stroke.</div>
+ </div>
+</div>
+<script>
+(()=>{
+ const statusEl=document.getElementById('status'),startBtn=document.getElementById('start'),drawBtn=document.getElementById('draw'),clearBtn=document.getElementById('clear'),scene=document.querySelector('a-scene');
+ let starting=false;const status=m=>statusEl.textContent=m;
+ scene.addEventListener('enter-vr',()=>{document.body.classList.add('in-ar');startBtn.style.display='none';status('AR ready. Hold DRAW and move your phone to create a 3D stroke.');});
+ scene.addEventListener('exit-vr',()=>{document.body.classList.remove('in-ar');startBtn.style.display='';status('AR ended. Tap START AR EXPERIENCE to begin again.');setDrawing(false);});
+ startBtn.addEventListener('click',async()=>{
+  if(starting)return;starting=true;startBtn.disabled=true;status('Checking AR support…');
+  try{
+   if(!window.isSecureContext)throw Error('Open this page from a secure HTTPS address.');
+   if(!navigator.xr||!navigator.xr.isSessionSupported)throw Error('WebXR is unavailable. Try Chrome on a compatible Android phone.');
+   if(!await navigator.xr.isSessionSupported('immersive-ar'))throw Error('Immersive AR is not supported by this device/browser. A compatible ARCore Android phone and Chrome are usually required.');
+   if(!scene.hasLoaded)await new Promise(resolve=>scene.addEventListener('loaded',resolve,{once:true}));
+   // A-Frame, rather than a manual renderer.setSession call, owns XR startup.
+   await scene.enterVR();
+  }catch(err){status('AR could not start: '+(err&&err.message?err.message:String(err)));}
+  finally{starting=false;startBtn.disabled=false;}
+ });
+ function setDrawing(on){const c=scene.components['air-draw'];if(!c)return;if(on)c.beginStroke();else c.endStroke();drawBtn.classList.toggle('active',on);drawBtn.textContent=on?'DRAWING…':'HOLD TO DRAW';}
+ drawBtn.addEventListener('pointerdown',e=>{e.preventDefault();if(!document.body.classList.contains('in-ar')){status('Start AR first.');return;}try{drawBtn.setPointerCapture(e.pointerId);}catch(_){}setDrawing(true);});
+ const release=()=>{if(drawBtn.classList.contains('active'))setDrawing(false);};
+ drawBtn.addEventListener('pointerup',release);drawBtn.addEventListener('pointercancel',release);drawBtn.addEventListener('lostpointercapture',release);window.addEventListener('blur',release);
+ clearBtn.addEventListener('click',()=>{const c=scene.components['air-draw'];if(c)c.clearAll();drawBtn.classList.remove('active');drawBtn.textContent='HOLD TO DRAW';status('All drawings cleared.');});
+})();
+</script>
+</body></html>
